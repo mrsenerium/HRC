@@ -1,0 +1,141 @@
+<?php
+function butlerHRC_block_info()
+{
+  $block['butlerHRC'] = array(
+    'info'  => t('Butler HRC Calendar'),
+    //'cache' => DRUPAL_NO_CACHE,
+  );
+  return $block;
+}
+
+function butlerHRC_block_view($block_key){
+    $block = array();
+    if($block_key == 'butlerHRC'){ //We only want to define the content of OUR block
+        $today = date("Y-m-d\TH:i:s");//We Need Data For the three days
+        $tomorrow = date("Y-m-d", strtotime('tomorrow'))."T00:00:00";
+        $twoTomorrow = date("Y-m-d", strtotime('+2 days'))."T00:00:00";
+        if($cached = cache_get('HRCRooms', 'cache'))
+        {
+          $rooms = $cached->data;
+        }
+        if(empty($rooms))
+        {
+          $rooms = getHRCRooms(); //We need an array of Rooms that are Standard and Not Combo
+        }
+        cache_set('HRCRooms', $rooms, 'cache', CACHE_PERMANENT);//The rooms will be stored in cache until cache is cleared
+        $output = "<table>\n<thead>\n<tr>\n" .
+                  "<th>Start Time</th>\n" .
+                  "<th>End Time</th>\n" . //Egad this HTML is Ugly, but it's needed to make a table
+                  "<th>Event Name</th>\n" .
+                  "<th>Location</th>\n" .
+                  "</tr></thead><tbody>\n";
+        $output .= '<th colspan="4">'.date("l, F d, Y", strtotime($today))."</th>\n" . formatData(getHRCBookings($today), $rooms, $today); //it's easier to request thrice than sort it all out once
+        $output .= '<th colspan="4">'.date("l, F d, Y", strtotime($tomorrow))."</th>\n" . formatData(getHRCBookings($tomorrow), $rooms);
+        $output .= '<th colspan="4">'.date("l, F d, Y", strtotime($twoTomorrow))."</th>\n" . formatData(getHRCBookings($twoTomorrow), $rooms);
+        $output .= "</tbody>\n</table>";
+
+        //Define the block content.
+        $block['content'] = t($output);
+    }
+
+    return $block;
+}
+
+function getHRCBookings($date)
+{
+  $APIUser = "####";
+  $APIPassword = "####";
+  $url = "####";
+
+  try
+  {
+    $client = new SoapClient($url . "?WSDL", array('encoding' => 'utf-8', 'SOAPAction' => "http://DEA.EMS.API.Web.Service/GetBookings"));
+    $result = $client->GetBookings(array(
+      "UserName" => $APIUser,
+      "Password" => $APIPassword,
+      "StartDate" => $date,
+      "EndDate" => $date,
+      "Buildings" => array("int" => "26"),
+      "ViewComboRoomComponents" => "false"
+    ));
+  } catch (Exception $e)
+  {
+    return $e->getMessage();//This error will appear in the Table so it'll help figure out what day went wrong
+  }
+  
+  $simple_result=simplexml_load_string($result->GetBookingsResult);
+  return $simple_result;
+}
+
+function getHRCRooms()
+{
+  $APIUser = "####";
+  $APIPassword = "####";
+  $url = "####";
+
+  try
+  {
+    $client = new SoapClient($url . "?WSDL", array('encoding' => 'utf-8', 'SOAPAction' => "http://DEA.EMS.API.Web.Service/GetRooms"));
+    $result = $client->GetRooms(array(
+      "UserName" => $APIUser,
+      "Password" => $APIPassword,
+      "Buildings" => array("int" => "26"),
+    ));
+  } catch (Exception $e)
+  {
+    return $e->getMessage();
+  }
+
+  $simple_result=simplexml_load_string($result->GetRoomsResult);
+  $rooms = json_decode(json_encode($simple_result), true);
+  $roomArray = array();
+  $rooms = $rooms['Data'];
+  foreach($rooms as $room)
+  {
+    if(!strcmp('Standard', $room['Classification']))
+    {
+      $roomArray[$room['Description']] = $room['ID'];
+    }
+  }
+  return $roomArray;
+}
+
+function formatData($data, $rooms, $date = null)
+{
+  $output = "";//Good Form
+  if(is_object($data))
+  {
+    $data = (array)$data->children();
+    $data = $data['Data'];
+    usort($data, "sortTime");
+    $data = array_unique($data, SORT_REGULAR);
+    foreach ($data as $booking)
+    {
+      if(-14 == $booking->StatusTypeID && in_array($booking->RoomID, $rooms) && ($booking->TimeEventEnd > $date))//I don't feel right about this here
+      {
+        $output .= "<tr>\n";
+        $output .= "<td>" . date("g:i A", strtotime($booking->TimeEventStart)) . "</td>\n";
+        $output .= "<td>" . date("g:i A", strtotime($booking->TimeEventEnd)) . "</td>\n";
+        $output .= "<td>{$booking->EventName}</td>\n";
+        $output .= "<td>{$booking->RoomDescription}</td>\n";
+        $output .= "</tr>\n";
+      }
+    }
+  }
+  else
+  {
+    $output .= "<tr><td>$data</td></tr>";
+  }
+  return $output;
+}
+
+function sortTime($a, $b)//This function is just for usort
+{
+  $time1 = strtotime($a->TimeEventStart);
+  $time2 = strtotime($b->TimeEventStart);
+
+  if($time1 == $time2)
+    return 0;
+
+  return ($time1 > $time2 ? 1 : -1);
+}

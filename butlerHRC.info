@@ -1,0 +1,5 @@
+name = Butler HRC Calendar
+core = 7.x
+package = Butler
+description = "Butler HRC Calender"
+project = butlerHRC
